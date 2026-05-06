@@ -1,6 +1,20 @@
 location /code/ {
     root /var/www/code;
+
     tree_sitter_filter on;
     tree_sitter_language c /parsers/c.so;
     tree_sitter_language python /parsers/python.so;
+
+    # for raw=1
+    # override the default mime type "application/octet-stream"
+    default_type "text/plain; charset=utf-8";
+}
+
+location ~ \.py$ {
+    tree_sitter_filter on;
+    tree_sitter_language python /parsers/python.so;
+
+    # for raw=1
+    # override the default mime type "application/octet-stream"
+    default_type "text/x-py; charset=utf-8";
 }
