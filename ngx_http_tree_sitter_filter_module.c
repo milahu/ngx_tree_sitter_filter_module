@@ -921,10 +921,16 @@ ts_render_html(
 
     u_char *p = buf;
     size_t pos = 0;
+    size_t prev_start = (size_t)(-1);
 
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: looping spans: n=%d", n);
 
     for (ngx_uint_t i = 0; i < n; i++) {
+
+        if (s[i].start == prev_start) {
+            // dont emit empty span
+            continue;
+        }
 
         /* emit text before span */
         while (pos < s[i].start && pos < len) {
@@ -945,6 +951,8 @@ ts_render_html(
 
         /* close */
         p += sprintf((char *)p, "</span>");
+
+        prev_start = s[i].start;
     }
 
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: tail");
