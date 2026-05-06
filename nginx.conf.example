@@ -1,4 +1,6 @@
 location /code/ {
     root /var/www/code;
     tree_sitter_filter on;
+    tree_sitter_language c /parsers/c.so;
+    tree_sitter_language python /parsers/python.so;
 }

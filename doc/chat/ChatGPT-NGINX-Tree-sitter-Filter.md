@@ -3,7 +3,7 @@
 **User:** Milan Hauth (<milahu@gmail.com>)  
 **Created:** 2026/5/6 3:27:17  
 **Updated:** 2026/5/6 3:38:05  
-**Exported:** 2026/5/6 3:39:52  
+**Exported:** 2026/5/6 14:33:56  
 **Link:** [<https://chatgpt.com/c/69fa985a-facc-832c-8d54-69cf8457e7ea>](https://chatgpt.com/c/69fa985a-facc-832c-8d54-69cf8457e7ea)
 
 ## Prompt:
@@ -752,8 +752,6 @@ If you want, I can next give you:
 
 - extension → language mapping (fast, no hash collisions)
 - or a **minimal Tree-sitter highlight pipeline using queries** (the “real” way to color code)
-
-Is this conversation helpful so far?
 
 ------------------------------------------------------------------------
 

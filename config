@@ -1,6 +1,11 @@
-ngx_addon_name=ngx_tree_sitter_filter_module
+ngx_module_type=HTTP_FILTER
+ngx_module_name=ngx_http_tree_sitter_filter_module
+ngx_module_srcs="$ngx_addon_dir/ngx_http_tree_sitter_filter_module.c"
+# TODO?
+#   mv ngx_http_tree_sitter_filter_module.c ngx_tree_sitter_filter_module.c
+#   sed -i 's/ngx_http_tree_sitter_filter_module/ngx_tree_sitter_filter_module/' ngx_tree_sitter_filter_module.c
+# ngx_module_name=ngx_tree_sitter_filter_module
+# ngx_module_srcs="$ngx_addon_dir/ngx_tree_sitter_filter_module.c"
+ngx_module_libs=-ltree-sitter
 
-HTTP_MODULES="$HTTP_MODULES ngx_http_tree_sitter_filter_module"
-
-NGX_ADDON_SRCS="$NGX_ADDON_SRCS \
-    $ngx_addon_dir/ngx_http_tree_sitter_filter_module.c"
+. auto/module
