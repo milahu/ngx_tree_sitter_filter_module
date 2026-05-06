@@ -5,6 +5,10 @@
 #include <dlfcn.h>
 #include <tree_sitter/api.h>
 
+#ifndef NGX_COMPAT
+    #error "nginx must be configured with --with-compat to enable r->headers_in.accept"
+#endif
+
 #define DEBUG 0
 
 // forward declare module
@@ -281,6 +285,28 @@ ngx_http_ts_should_skip(ngx_http_request_t *r)
         while (p < last && *p != '&') p++;
         p++;
     }
+
+    ngx_table_elt_t  *accept;
+    accept = r->headers_in.accept;
+    if (accept != NULL) {
+        // TODO better? use a regex?
+        if (accept->value.len >= 10 && ngx_strstr(accept->value.data, "text/plain") != NULL) {
+            #if DEBUG
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_should_skip: found 'text/plain' in headers_in.accept=%s -> skipping", accept->value.data);
+            #endif
+            return 1;
+        }
+        #if DEBUG
+        else {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_should_skip: not found 'text/plain' in headers_in.accept=%s", accept->value.data);
+        }
+        #endif
+    }
+    #if DEBUG
+    else {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_should_skip: headers_in.accept is empty");
+    }
+    #endif
 
     return 0;
 }
