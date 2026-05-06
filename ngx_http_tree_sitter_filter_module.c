@@ -933,7 +933,9 @@ ts_render_html(
         /* open span */
         p += sprintf((char *)p, "<span class=\"%s\">", s[i].class_name);
 
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: looping spans: i=%d class=%s", i, s[i].class_name);
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: looping spans: i=%d class=%s start=%d end=%d len=%d",
+            i, s[i].class_name, s[i].start, s[i].end, (s[i].end - s[i].start)
+        );
 
         /* emit span content */
         while (pos < s[i].end && pos < len) {
