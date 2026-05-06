@@ -140,24 +140,6 @@ ngx_module_t ngx_http_tree_sitter_filter_module = {
 
 
 
-/* ================= INIT ================= */
-
-/*
-static ngx_int_t
-ngx_http_ts_filter_init(ngx_conf_t *cf)
-{
-    ngx_http_next_header_filter = ngx_http_top_header_filter;
-    ngx_http_top_header_filter = ngx_http_ts_header_filter;
-
-    ngx_http_next_body_filter = ngx_http_top_body_filter;
-    ngx_http_top_body_filter = ngx_http_ts_body_filter;
-
-    return NGX_OK;
-}
-*/
-
-
-
 /* ================= CONFIG ================= */
 
 static void *
@@ -367,7 +349,6 @@ ngx_http_ts_load_languages_runtime(
             return NGX_ERROR;
         }
 
-// ngx_http_ts_load_languages_runtime
         l->language = fn();
 
 
@@ -807,8 +788,6 @@ ngx_ts_load_query(ngx_http_request_t *r, TSLanguage *lang, const char *path)
 static const char *
 ts_capture_to_class(const char *name, uint32_t len)
 {
-    return name;
-    /*
     if (strncmp(name, "keyword", len) == 0) return "kw";
     if (strncmp(name, "string", len) == 0) return "str";
     if (strncmp(name, "comment", len) == 0) return "com";
@@ -816,7 +795,6 @@ ts_capture_to_class(const char *name, uint32_t len)
     if (strncmp(name, "type", len) == 0) return "type";
 
     return "tok";
-    */
 }
 #endif
 
