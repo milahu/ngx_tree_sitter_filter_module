@@ -15,3 +15,11 @@ location ~ \.py$ {
     # override the default mime type "application/octet-stream"
     default_type "text/x-py; charset=utf-8";
 }
+
+location ~ \.(cpp|cc|c\+\+|cxx|hpp|h\+\+|hh|hxx)$ {
+    tree_sitter_filter on;
+    tree_sitter_language_name cpp;
+    tree_sitter_parser_path /parsers/cpp/parser.so;
+    tree_sitter_highlights_path /parsers/cpp/queries/highlights.scm;
+    default_type "text/x-cpp; charset=utf-8";
+}
