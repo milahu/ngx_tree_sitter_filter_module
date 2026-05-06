@@ -5,6 +5,8 @@
 #include <dlfcn.h>
 #include <tree_sitter/api.h>
 
+#define DEBUG 0
+
 // forward declare module
 extern ngx_module_t ngx_http_tree_sitter_filter_module;
 
@@ -215,21 +217,9 @@ ngx_http_ts_add_language(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 static ngx_int_t
 ngx_http_ts_filter_init(ngx_conf_t *cf)
 {
-    // not used
-    /*
-    ngx_http_ts_loc_conf_t *conf;
-
-    conf = ngx_http_conf_get_module_loc_conf(cf,
-        ngx_http_tree_sitter_filter_module);
-    */
-
-    /*
-    if (ngx_http_ts_load_languages(cf, conf) != NGX_OK) {
-        return NGX_ERROR;
-    }
-    */
-
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, cf->log, 0, "ngx_http_ts_filter_init: hello"); // debug
+    #endif
 
     ngx_http_next_header_filter = ngx_http_top_header_filter;
     ngx_http_top_header_filter = ngx_http_ts_header_filter;
@@ -248,8 +238,9 @@ ngx_http_ts_find_language(ngx_http_request_t *r, ngx_str_t *name)
     ngx_http_ts_loc_conf_t *conf;
     conf = ngx_http_get_module_loc_conf(r, ngx_http_tree_sitter_filter_module);
 
-    // debug
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_find_language: hello");
+    #endif
 
     if (conf->languages == NULL) return NULL;
 
@@ -275,12 +266,15 @@ ngx_http_ts_should_skip(ngx_http_request_t *r)
     u_char *p = r->args.data;
     u_char *last = p + r->args.len;
 
-    // debug
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_should_skip: hello");
+    #endif
 
     while (p < last) {
         if (ngx_strncmp(p, "raw=1", 5) == 0) {
+            #if DEBUG
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_should_skip: found 'raw=1' in args.data -> skipping");
+            #endif
             return 1;
         }
 
@@ -299,8 +293,9 @@ ngx_http_ts_load_languages_runtime(
     ngx_http_ts_loc_conf_t *conf
 )
 {
-    // debug
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_load_languages_runtime: hello");
+    #endif
 
     if (conf->languages_loaded) {
         return NGX_OK;
@@ -361,8 +356,6 @@ ngx_http_ts_load_languages_runtime(
 
         l->query = ngx_ts_load_query(r, l->language, query_path);
 
-
-
         if (l->language == NULL) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                 "tree_sitter: %s() returned NULL", symbol);
@@ -387,13 +380,12 @@ ngx_http_ts_header_filter(ngx_http_request_t *r)
 
     conf = ngx_http_get_module_loc_conf(r, ngx_http_tree_sitter_filter_module);
 
-    // debug
-    /*
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
         "ngx_http_ts_header_filter: enabled=%d uri=%V",
         conf->enabled, &r->uri
     );
-    */
+    #endif
 
     if (!conf->enabled || ngx_http_ts_should_skip(r)) {
         return ngx_http_next_header_filter(r);
@@ -441,19 +433,19 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     ctx = ngx_http_get_module_ctx(r, ngx_http_tree_sitter_filter_module);
 
     if (ctx == NULL || ngx_http_ts_should_skip(r)) {
-        /*
-        // debug
+        #if 0
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
             "ngx_http_ts_body_filter: uri=%V -> skip", &r->uri
         );
-        */
+        #endif
         return ngx_http_next_body_filter(r, in);
     }
 
-    // debug
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
         "ngx_http_ts_body_filter: uri=%V -> filter", &r->uri
     );
+    #endif
 
     // copy input from cl to ctx->in
     for (cl = in; cl; cl = cl->next) {
@@ -521,7 +513,6 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     u_char *highlighted;
     size_t out_len;
     size_t highlighted_len;
-    // char highlight_done = 0;
 
     // single-line html header to preserve line numbers
     const char *prefix = (
@@ -561,7 +552,9 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     out_buf->last_buf = 1;
     */
 
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: calling ngx_http_ts_highlight");
+    #endif
 
     if (
         ts_lang != NULL &&
@@ -586,31 +579,39 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         out_buf->pos = out;
         out_buf->last = out;
 
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: calling ngx_http_ts_highlight done");
-
+        #if DEBUG
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: copying prefix");
+        #endif
+
         out_buf->last = ngx_cpymem(out_buf->last, prefix, ngx_strlen(prefix));
 
+        #if DEBUG
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: copying highlighted: len=%d", highlighted_len);
+        #endif
+
         out_buf->last = ngx_cpymem(out_buf->last, highlighted, highlighted_len);
 
+        #if DEBUG
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: copying suffix");
+        #endif
+
         out_buf->last = ngx_cpymem(out_buf->last, suffix, ngx_strlen(suffix));
 
+        #if DEBUG
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: done copying");
+        #endif
 
         // TODO? free highlighted
-
-        // highlight_done = 1;
     } else {
         // FIXME return valid HTML, since in header_filter, we have already sent content-type:text/html
+        #if DEBUG
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: calling ngx_http_ts_highlight failed");
+        #endif
         // highlight failed -> fallback
         out_len = ctx->len;
         // out_buf->last = ngx_cpymem(out_buf->last, all, out_len);
         out_buf->pos = all;
         out_buf->last = all + ctx->len;
-        // highlight_done = 0;
     }
 
     /*
@@ -624,31 +625,11 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     out_buf->memory = 1;
     out_buf->last_buf = 1;
 
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: creating out_chain");
+    #endif
 
     ngx_chain_t out_chain = { out_buf, NULL };
-
-    // this has no effect in body_filter -> move to header_filter
-    #if false
-    if (highlight_done) {
-        // FIXME the server still returns "Content-Type: application/octet-stream"
-        // TMP ts_render_html: looping spans:
-        // ngx_str_t mime = ngx_string("text/html;charset=utf-8");
-        ngx_str_t mime = ngx_string("text/html");
-        r->headers_out.content_type = mime;
-    }
-    else {
-        // TODO preserve content-type from nginx config
-        /*
-        ngx_str_t mime = ngx_string("text/plain;charset=utf-8");
-        r->headers_out.content_type = mime;
-        */
-
-        // ngx_str_t mime = ngx_string("text/x-nigga;charset=utf-8");
-        ngx_str_t mime = ngx_string("text/x-nigga");
-        r->headers_out.content_type = mime;
-    }
-    #endif
 
     r->headers_out.content_length_n = out_len;
 
@@ -667,8 +648,9 @@ ngx_http_ts_highlight(
     size_t *out_len
 )
 {
-    // debug
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_highlight: hello");
+    #endif
 
     TSParser *parser = ts_parser_new();
     if (parser == NULL) return NGX_ERROR;
@@ -748,8 +730,9 @@ ngx_http_ts_highlight(
 static TSQuery *
 ngx_ts_load_query(ngx_http_request_t *r, TSLanguage *lang, const char *path)
 {
-    // debug
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_ts_load_query: hello");
+    #endif
 
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
@@ -821,8 +804,9 @@ ts_collect_spans(
     ngx_array_t *spans
 )
 {
-    // debug
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_collect_spans: hello");
+    #endif
 
     TSQueryCursor *cursor = ts_query_cursor_new();
     if (!cursor) return NGX_ERROR;
@@ -834,25 +818,16 @@ ts_collect_spans(
     TSQueryMatch match;
     uint32_t capture_index;
 
-    /*
+    #if DEBUG
     uint32_t capture_count = ts_query_capture_count(lang->query);
 
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
         "ts_collect_spans: capture_count=%d", capture_count);
-    */
+    #endif
 
     while (ts_query_cursor_next_capture(cursor, &match, &capture_index)) {
 
         TSQueryCapture capture = match.captures[capture_index];
-
-        /*
-        if (capture.index >= capture_count) {
-            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                "ts_collect_spans: invalid capture index: %u >= %u",
-                capture.index, capture_count);
-            continue;
-        }
-        */
 
         TSNode node = capture.node;
 
@@ -867,13 +842,12 @@ ts_collect_spans(
             &cap_name_len
         );
 
-        /*
-        // debug
+        #if 0
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
             "ts_collect_spans: start=%d end=%d capture_index=%d capture.index=%d cap_name=%s",
             start, end, capture_index, capture.index, cap_name
         );
-        */
+        #endif
 
         ts_span_t *s = ngx_array_push(spans);
         if (!s) return NGX_ERROR;
@@ -908,19 +882,26 @@ ts_render_html(
     u_char **out, size_t *out_len
 )
 {
-    // debug
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: spans->elts");
+    #endif
     ts_span_t *s = spans->elts;
 
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: spans->nelts");
+    #endif
     ngx_uint_t n = spans->nelts;
 
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: qsort");
+    #endif
     qsort(s, n, sizeof(ts_span_t), ts_span_cmp);
 
     // size_t cap = len * 4 + 1024; // too small?
     size_t cap = len * 10 + 10240;
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: buf = ngx_pnalloc");
+    #endif
     u_char *buf = ngx_pnalloc(r->pool, cap);
     if (!buf) return NGX_ERROR;
 
@@ -928,7 +909,9 @@ ts_render_html(
     size_t pos = 0;
     size_t prev_start = (size_t)(-1);
 
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: looping spans: n=%d", n);
+    #endif
 
     for (ngx_uint_t i = 0; i < n; i++) {
 
@@ -945,9 +928,11 @@ ts_render_html(
         /* open span */
         p += sprintf((char *)p, "<span class=\"%s\">", s[i].class_name);
 
+        #if 0
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: looping spans: i=%d class=%s start=%d end=%d len=%d",
             i, s[i].class_name, s[i].start, s[i].end, (s[i].end - s[i].start)
         );
+        #endif
 
         /* emit span content */
         while (pos < s[i].end && pos < len) {
@@ -960,7 +945,9 @@ ts_render_html(
         prev_start = s[i].start;
     }
 
+    #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: tail");
+    #endif
 
     /* tail */
     while (pos < len) {
