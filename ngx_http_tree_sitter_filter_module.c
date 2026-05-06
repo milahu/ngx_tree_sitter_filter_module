@@ -523,26 +523,27 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     size_t highlighted_len;
     // char highlight_done = 0;
 
+    // single-line html header to preserve line numbers
     const char *prefix = (
-        "<!doctype html>\n"
-        "<html>\n"
-        "<head>\n"
-        "<style>\n"
-        "<style>\n"
-        ".keyword { color: #c00; }\n"
-        ".string { color: #080; }\n"
-        ".comment { color: #888; }\n"
-        ".function { color: #06c; }\n"
-        ".type { color: #a0a; }\n"
-        "</style>\n"
-        "</head>\n"
-        "<body>\n"
-        "<pre>\n"
+        "<!doctype html>"
+        "<html>"
+        "<head>"
+        "<style>"
+        "<style>"
+        ".keyword { color: #c00; }"
+        ".string { color: #080; }"
+        ".comment { color: #888; }"
+        ".function { color: #06c; }"
+        ".type { color: #a0a; }"
+        "</style>"
+        "</head>"
+        "<body>"
+        "<pre>"
     );
 
     const char *suffix = (
-        "</pre>\n"
-        "</body>\n"
+        "</pre>"
+        "</body>"
         "</html>\n"
     );
 
