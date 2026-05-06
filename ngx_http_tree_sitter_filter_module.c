@@ -71,6 +71,8 @@ static ngx_int_t ts_render_html(ngx_http_request_t *r, u_char *src, size_t len, 
 
 static char *ngx_http_ts_add_language(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 
+static ngx_inline u_char *ts_escape_char(u_char *p, u_char c);
+
 
 
 // global state
@@ -373,6 +375,34 @@ ngx_http_ts_load_languages_runtime(
     conf->languages_loaded = 1;
 
     return NGX_OK;
+}
+
+
+
+static ngx_inline u_char *
+ts_escape_char(u_char *p, u_char c)
+{
+    switch (c) {
+        case '<':
+            p = ngx_cpymem(p, "&lt;", 4);
+            break;
+
+        #if 0
+        case '>':
+            p = ngx_cpymem(p, "&gt;", 4);
+            break;
+        #endif
+
+        case '&':
+            p = ngx_cpymem(p, "&amp;", 5);
+            break;
+
+        default:
+            *p++ = c;
+            break;
+    }
+
+    return p;
 }
 
 
@@ -681,7 +711,7 @@ ngx_http_ts_highlight(
 
 
 
-    #if false
+    #if 0
     TSNode root = ts_tree_root_node(tree);
 
     /* For now: fallback = plain escaped text */
@@ -693,14 +723,8 @@ ngx_http_ts_highlight(
 
     u_char *p = buf;
 
-    /* simple HTML escape */
     for (size_t i = 0; i < len; i++) {
-        switch (src[i]) {
-            case '<': p = ngx_cpymem(p, "&lt;", 4); break;
-            // case '>': p = ngx_cpymem(p, "&gt;", 4); break;
-            case '&': p = ngx_cpymem(p, "&amp;", 5); break;
-            default:  *p++ = src[i];
-        }
+        p = ts_escape_char(p, src[i]);
     }
 
     *out = buf;
@@ -926,7 +950,7 @@ ts_render_html(
 
         /* emit text before span */
         while (pos < s[i].start && pos < len) {
-            *p++ = src[pos++];
+            p = ts_escape_char(p, src[pos++]);
         }
 
         /* open span */
@@ -940,7 +964,7 @@ ts_render_html(
 
         /* emit span content */
         while (pos < s[i].end && pos < len) {
-            *p++ = src[pos++];
+            p = ts_escape_char(p, src[pos++]);
         }
 
         /* close */
@@ -955,7 +979,7 @@ ts_render_html(
 
     /* tail */
     while (pos < len) {
-        *p++ = src[pos++];
+        p = ts_escape_char(p, src[pos++]);
     }
 
     *out = buf;
