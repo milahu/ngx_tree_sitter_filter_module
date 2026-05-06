@@ -1,18 +1,15 @@
-location /code/ {
-    root /var/www/code;
-
-    tree_sitter_filter on;
-    tree_sitter_language c /parsers/c.so;
-    tree_sitter_language python /parsers/python.so;
-
-    # for raw=1
-    # override the default mime type "application/octet-stream"
-    default_type "text/plain; charset=utf-8";
-}
-
 location ~ \.py$ {
     tree_sitter_filter on;
-    tree_sitter_language python /parsers/python.so;
+
+    # language_name must match the main function name
+    # example: tree_sitter_python
+    tree_sitter_language_name python;
+
+    tree_sitter_parser_path /parsers/python/parser.so;
+
+    tree_sitter_highlights_path /parsers/python/queries/highlights.scm;
+
+    tree_sitter_css_style ".comment{color:gray;} .function{color:green;}";
 
     # for raw=1
     # override the default mime type "application/octet-stream"

@@ -14,12 +14,21 @@
 // forward declare module
 extern ngx_module_t ngx_http_tree_sitter_filter_module;
 
+// persistent state: NGX_HTTP_LOC_CONF = per location, per worker
+// shared between requests
 typedef struct {
     ngx_flag_t enabled;
-    ngx_array_t *languages;   // array of ngx_ts_language_t
-    ngx_flag_t languages_loaded;
+    ngx_str_t language_name;
+    ngx_str_t parser_path;
+    ngx_str_t highlights_path;
+    ngx_str_t css_style;
+    ngx_flag_t language_loaded;
+    void *dl_handle;
+    TSLanguage *language;
+    TSQuery *query;
 } ngx_http_ts_loc_conf_t;
 
+// temporary state: per request
 typedef struct {
     ngx_buf_t *buf;
     ngx_chain_t *in;
@@ -32,14 +41,6 @@ typedef struct {
     uint32_t end;
     const char *class_name;
 } ts_span_t;
-
-typedef struct {
-    ngx_str_t name;        // "c", "python"
-    ngx_str_t path;        // /path/to/parser.so
-    void *dl_handle;
-    TSLanguage *language;
-    TSQuery *query;
-} ngx_ts_language_t;
 
 
 
@@ -55,21 +56,19 @@ static void *ngx_http_ts_create_loc_conf(ngx_conf_t *cf);
 
 static char *ngx_http_ts_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
 
-static ngx_int_t ngx_http_ts_load_languages_runtime(ngx_http_request_t *r, ngx_http_ts_loc_conf_t *conf);
+static ngx_int_t ngx_http_ts_load_language_runtime(ngx_http_request_t *r, ngx_http_ts_loc_conf_t *conf);
 
-static ngx_int_t ngx_http_ts_highlight(ngx_http_request_t *r, ngx_ts_language_t *ts_lang, u_char *src, size_t len, u_char **out, size_t *out_len);
+static ngx_int_t ngx_http_ts_highlight(ngx_http_request_t *r, ngx_http_ts_loc_conf_t *conf, u_char *src, size_t len, u_char **out, size_t *out_len);
 
-static TSQuery *ngx_ts_load_query(ngx_http_request_t *r, TSLanguage *lang, const char *path);
+static TSQuery *ngx_ts_load_query(ngx_http_request_t *r, ngx_http_ts_loc_conf_t *conf);
 
 //static const char *ts_capture_to_class(const char *name, uint32_t len);
 
-static ngx_int_t ts_collect_spans(ngx_http_request_t *r, ngx_ts_language_t *lang, TSTree *tree, ngx_array_t *spans);
+static ngx_int_t ts_collect_spans(ngx_http_request_t *r, ngx_http_ts_loc_conf_t *conf, TSTree *tree, ngx_array_t *spans);
 
 static int ts_span_cmp(const void *a, const void *b);
 
 static ngx_int_t ts_render_html(ngx_http_request_t *r, u_char *src, size_t len, ngx_array_t *spans, u_char **out, size_t *out_len);
-
-static char *ngx_http_ts_add_language(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 
 static ngx_inline u_char *ts_escape_char(u_char *p, u_char c);
 
@@ -96,11 +95,38 @@ static ngx_command_t ngx_http_ts_directives[] = {
     },
 
     {
-        ngx_string("tree_sitter_language"),
-        NGX_HTTP_LOC_CONF|NGX_CONF_TAKE2,
-        ngx_http_ts_add_language,
+        ngx_string("tree_sitter_language_name"),
+        NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+        ngx_conf_set_str_slot,
         NGX_HTTP_LOC_CONF_OFFSET,
-        0,
+        offsetof(ngx_http_ts_loc_conf_t, language_name),
+        NULL
+    },
+
+    {
+        ngx_string("tree_sitter_parser_path"),
+        NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+        ngx_conf_set_str_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_ts_loc_conf_t, parser_path),
+        NULL
+    },
+
+    {
+        ngx_string("tree_sitter_highlights_path"),
+        NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+        ngx_conf_set_str_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_ts_loc_conf_t, highlights_path),
+        NULL
+    },
+
+    {
+        ngx_string("tree_sitter_css_style"),
+        NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+        ngx_conf_set_str_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_ts_loc_conf_t, css_style),
         NULL
     },
 
@@ -170,36 +196,6 @@ ngx_http_ts_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 
 
 
-static char *
-ngx_http_ts_add_language(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
-{
-    // TODO also take path to highlights.scm
-    ngx_http_ts_loc_conf_t *tlcf = conf;
-    ngx_str_t *value = cf->args->elts;
-
-    if (tlcf->languages == NULL) {
-        tlcf->languages = ngx_array_create(cf->pool, 4, sizeof(ngx_ts_language_t));
-        if (tlcf->languages == NULL) {
-            return NGX_CONF_ERROR;
-        }
-    }
-
-    ngx_ts_language_t *lang = ngx_array_push(tlcf->languages);
-    if (lang == NULL) {
-        return NGX_CONF_ERROR;
-    }
-
-    lang->name = value[1];  // "c"
-    lang->path = value[2];  // "/parsers/c.so"
-
-    lang->dl_handle = NULL;
-    lang->language = NULL;
-
-    return NGX_CONF_OK;
-}
-
-
-
 // init
 // Hook into config lifecycle
 static ngx_int_t
@@ -216,32 +212,6 @@ ngx_http_ts_filter_init(ngx_conf_t *cf)
     ngx_http_top_body_filter = ngx_http_ts_body_filter;
 
     return NGX_OK;
-}
-
-// Lookup helper
-// static TSLanguage *
-static ngx_ts_language_t *
-ngx_http_ts_find_language(ngx_http_request_t *r, ngx_str_t *name)
-{
-    ngx_http_ts_loc_conf_t *conf;
-    conf = ngx_http_get_module_loc_conf(r, ngx_http_tree_sitter_filter_module);
-
-    #if DEBUG
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_find_language: hello");
-    #endif
-
-    if (conf->languages == NULL) return NULL;
-
-    ngx_ts_language_t *langs = conf->languages->elts;
-
-    for (ngx_uint_t i = 0; i < conf->languages->nelts; i++) {
-        if (ngx_strcmp(langs[i].name.data, name->data) == 0) {
-            // return langs[i].language;
-            return &(langs[i]);
-        }
-    }
-
-    return NULL;
 }
 
 
@@ -298,81 +268,76 @@ ngx_http_ts_should_skip(ngx_http_request_t *r)
 
 
 static ngx_int_t
-ngx_http_ts_load_languages_runtime(
+ngx_http_ts_load_language_runtime(
     ngx_http_request_t *r,
     ngx_http_ts_loc_conf_t *conf
 )
 {
     #if DEBUG
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_load_languages_runtime: hello");
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_load_language_runtime: hello");
     #endif
 
-    if (conf->languages_loaded) {
+    if (conf->language_loaded) {
         return NGX_OK;
     }
 
-    if (conf->languages == NULL) {
-        conf->languages_loaded = 1;
+    if (conf->parser_path.data == NULL) {
+        conf->language_loaded = 1;
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+            "tree_sitter: no parser_path");
         return NGX_OK;
     }
 
-    ngx_ts_language_t *langs = conf->languages->elts;
+    if (conf->highlights_path.data == NULL) {
+        conf->language_loaded = 1;
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+            "tree_sitter: no highlights_path");
+        return NGX_OK;
+    }
 
-    for (ngx_uint_t i = 0; i < conf->languages->nelts; i++) {
+    { // keep indent
 
-        ngx_ts_language_t *l = &langs[i];
-
-        if (l->language != NULL) {
-            continue; // already loaded
+        if (conf->language != NULL) {
+            // already loaded
+            return NGX_OK;
         }
 
-        /* dlopen */
-        l->dl_handle = dlopen((char *)l->path.data, RTLD_NOW | RTLD_LOCAL);
-        if (l->dl_handle == NULL) {
+        conf->dl_handle = dlopen((char *)conf->parser_path.data, RTLD_NOW | RTLD_LOCAL);
+        if (conf->dl_handle == NULL) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                 "tree_sitter: dlopen(%V) failed: %s",
-                &l->path, dlerror());
+                &conf->parser_path, dlerror());
             return NGX_ERROR;
         }
 
-        /* build symbol name */
+        // build symbol name
         char symbol[128];
         ngx_snprintf((u_char *)symbol, sizeof(symbol),
-                     "tree_sitter_%V%Z", &l->name);
+                     "tree_sitter_%V%Z", &conf->language_name);
 
-        /* dlsym */
         TSLanguage *(*fn)(void);
-        fn = (TSLanguage *(*)(void)) dlsym(l->dl_handle, symbol);
+        fn = (TSLanguage *(*)(void)) dlsym(conf->dl_handle, symbol);
 
         if (fn == NULL) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                 "tree_sitter: symbol %s not found in %V",
-                symbol, &l->path);
+                symbol, &conf->parser_path);
             return NGX_ERROR;
         }
 
-        l->language = fn();
+        conf->language = fn();
 
+        // load parser/queries/highlights.scm
+        conf->query = ngx_ts_load_query(r, conf);
 
-
-        // load queries
-        /*
-        char query_path[256];
-        ngx_snprintf((u_char *)query_path, sizeof(query_path),
-                     "%V-highlights.scm%Z", &l->path); // adjust as needed
-        */
-        const char *query_path = "/nix/store/0qqq75jhlbpbzaj5c97ixi1l0phrwjc0-tree-sitter-python-0.25.0/queries/highlights.scm";
-
-        l->query = ngx_ts_load_query(r, l->language, query_path);
-
-        if (l->language == NULL) {
+        if (conf->language == NULL) {
             ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                 "tree_sitter: %s() returned NULL", symbol);
             return NGX_ERROR;
         }
     }
 
-    conf->languages_loaded = 1;
+    conf->language_loaded = 1;
 
     return NGX_OK;
 }
@@ -433,6 +398,7 @@ ngx_http_ts_header_filter(ngx_http_request_t *r)
         return NGX_ERROR;
     }
 
+    // set request context
     ngx_http_set_ctx(r, ctx, ngx_http_tree_sitter_filter_module);
 
     r->filter_need_in_memory = 1;
@@ -440,8 +406,9 @@ ngx_http_ts_header_filter(ngx_http_request_t *r)
     // we dont know content-length in advance
     r->headers_out.content_length_n = -1;
 
-    if (!conf->languages_loaded) {
-        if (ngx_http_ts_load_languages_runtime(r, conf) != NGX_OK) {
+    // TODO move to body_filter
+    if (!conf->language_loaded) {
+        if (ngx_http_ts_load_language_runtime(r, conf) != NGX_OK) {
             return NGX_ERROR;
         }
     }
@@ -462,10 +429,13 @@ ngx_http_ts_header_filter(ngx_http_request_t *r)
 static ngx_int_t
 ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 {
+    ngx_http_ts_loc_conf_t *conf;
     ngx_http_ts_ctx_t *ctx;
     ngx_buf_t *b;
     // ngx_buf_t *out;
     ngx_chain_t *cl;
+
+    conf = ngx_http_get_module_loc_conf(r, ngx_http_tree_sitter_filter_module);
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_tree_sitter_filter_module);
 
@@ -541,12 +511,6 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
     all[ctx->len] = '\0';
 
-    // ===== Detect language =====
-    // ngx_str_t lang = ngx_string("c"); // FIXME get file extension from request path
-    ngx_str_t lang = ngx_string("python"); // FIXME get file extension from request path
-    // TSLanguage *ts_lang = ngx_http_ts_find_language(r, &lang);
-    ngx_ts_language_t *ts_lang = ngx_http_ts_find_language(r, &lang);
-
     u_char *highlighted;
     size_t out_len;
     size_t highlighted_len;
@@ -557,7 +521,7 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         "<html>"
         "<head>"
         "<style>"
-        // TODO expose style config
+        // TODO use conf->css_style
         // ".keyword { color: #c00; }" // darkred
         // ".keyword { color: #a910d3; }" // purple
         ".keyword { color: #1b10e6; }" // blue
@@ -569,7 +533,7 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         ".type { color: #a0a; }" // purple
         "</style>"
         "</head>"
-        // TODO add language as class
+        // TODO add conf->language_name as class
         "<body class=\"code\">"
         "<pre>"
     );
@@ -594,11 +558,11 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     #endif
 
     if (
-        ts_lang != NULL &&
+        conf->language != NULL &&
         // parse input
         ngx_http_ts_highlight(
             r,
-            ts_lang,
+            conf,
             all,
             ctx->len,
             &highlighted,
@@ -678,7 +642,7 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 static ngx_int_t
 ngx_http_ts_highlight(
     ngx_http_request_t *r,
-    ngx_ts_language_t *ts_lang,
+    ngx_http_ts_loc_conf_t *conf,
     u_char *src,
     size_t len,
     u_char **out,
@@ -692,7 +656,7 @@ ngx_http_ts_highlight(
     TSParser *parser = ts_parser_new();
     if (parser == NULL) return NGX_ERROR;
 
-    if (!ts_parser_set_language(parser, ts_lang->language)) {
+    if (!ts_parser_set_language(parser, conf->language)) {
         ts_parser_delete(parser);
         return NGX_ERROR;
     }
@@ -743,8 +707,7 @@ ngx_http_ts_highlight(
 
     if (!spans) return NGX_ERROR;
 
-    // if (ts_collect_spans(r, lang, tree, spans) != NGX_OK) {
-    if (ts_collect_spans(r, ts_lang, tree, spans) != NGX_OK) {
+    if (ts_collect_spans(r, conf, tree, spans) != NGX_OK) {
         return NGX_ERROR;
     }
 
@@ -759,13 +722,13 @@ ngx_http_ts_highlight(
 
 
 static TSQuery *
-ngx_ts_load_query(ngx_http_request_t *r, TSLanguage *lang, const char *path)
+ngx_ts_load_query(ngx_http_request_t *r, ngx_http_ts_loc_conf_t *conf)
 {
     #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_ts_load_query: hello");
     #endif
 
-    FILE *f = fopen(path, "rb");
+    FILE *f = fopen((const char *)conf->highlights_path.data, "rb");
     if (!f) return NULL;
 
     fseek(f, 0, SEEK_END);
@@ -779,7 +742,7 @@ ngx_ts_load_query(ngx_http_request_t *r, TSLanguage *lang, const char *path)
         fclose(f);
         free(src);
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-            "tree_sitter: failed to read queries file. read only %d of %d bytes from %s", read_len, len, path);
+            "tree_sitter: failed to read queries file. read only %d of %d bytes from %s", read_len, len, conf->highlights_path.data);
         return NULL;
     }
     fclose(f);
@@ -788,7 +751,7 @@ ngx_ts_load_query(ngx_http_request_t *r, TSLanguage *lang, const char *path)
     TSQueryError err;
 
     TSQuery *q = ts_query_new(
-        lang,
+        conf->language,
         src,
         len,
         &err_offset,
@@ -827,7 +790,7 @@ ts_capture_to_class(const char *name, uint32_t len)
 static ngx_int_t
 ts_collect_spans(
     ngx_http_request_t *r,
-    ngx_ts_language_t *lang,
+    ngx_http_ts_loc_conf_t *conf,
     TSTree *tree,
     ngx_array_t *spans
 )
@@ -841,13 +804,13 @@ ts_collect_spans(
 
     TSNode root = ts_tree_root_node(tree);
 
-    ts_query_cursor_exec(cursor, lang->query, root);
+    ts_query_cursor_exec(cursor, conf->query, root);
 
     TSQueryMatch match;
     uint32_t capture_index;
 
     #if DEBUG
-    uint32_t capture_count = ts_query_capture_count(lang->query);
+    uint32_t capture_count = ts_query_capture_count(conf->query);
 
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
         "ts_collect_spans: capture_count=%d", capture_count);
@@ -865,7 +828,7 @@ ts_collect_spans(
         uint32_t cap_name_len;
 
         const char *cap_name = ts_query_capture_name_for_id(
-            lang->query,
+            conf->query,
             capture.index,
             &cap_name_len
         );
