@@ -1,0 +1,4 @@
+location /code/ {
+    root /var/www/code;
+    tree_sitter_filter on;
+}
