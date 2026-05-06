@@ -529,15 +529,20 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         "<html>"
         "<head>"
         "<style>"
-        "<style>"
-        ".keyword { color: #c00; }"
-        ".string { color: #080; }"
-        ".comment { color: #888; }"
-        ".function { color: #06c; }"
-        ".type { color: #a0a; }"
+        // TODO expose style config
+        // ".keyword { color: #c00; }" // darkred
+        // ".keyword { color: #a910d3; }" // purple
+        ".keyword { color: #1b10e6; }" // blue
+        // ".string { color: #080; }" // green
+        ".string { color: #a21f2d; }" // red
+        // ".comment { color: #888; }" // gray
+        ".comment { color: #008036; }" // green
+        ".function { color: #06c; }" // blue
+        ".type { color: #a0a; }" // purple
         "</style>"
         "</head>"
-        "<body>"
+        // TODO add language as class
+        "<body class=\"code\">"
         "<pre>"
     );
 
