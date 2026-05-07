@@ -137,7 +137,7 @@ static ngx_command_t ngx_http_ts_directives[] = {
 
 
 
-/* ================= MODULE ================= */
+// ================= MODULE =================
 
 static ngx_http_module_t ngx_http_ts_module_ctx = {
     NULL, // preconfiguration
@@ -170,7 +170,7 @@ ngx_module_t ngx_http_tree_sitter_filter_module = {
 
 
 
-/* ================= CONFIG ================= */
+// ================= CONFIG =================
 
 static void *
 ngx_http_ts_create_loc_conf(ngx_conf_t *cf)
@@ -218,7 +218,7 @@ ngx_http_ts_filter_init(ngx_conf_t *cf)
 
 
 
-/* ================= UTIL ================= */
+// ================= UTIL =================
 
 static ngx_int_t
 ngx_http_ts_should_skip(ngx_http_request_t *r)
@@ -374,7 +374,7 @@ ts_escape_char(u_char *p, u_char c)
 
 
 
-/* ================= HEADER FILTER ================= */
+// ================= HEADER FILTER =================
 
 static ngx_int_t
 ngx_http_ts_header_filter(ngx_http_request_t *r)
@@ -426,7 +426,7 @@ ngx_http_ts_header_filter(ngx_http_request_t *r)
 
 
 
-/* ================= BODY FILTER ================= */
+// ================= BODY FILTER =================
 
 static ngx_int_t
 ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
@@ -498,7 +498,7 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         return NGX_OK;
     }
 
-    /* ===== Build final buffer ===== */
+    // ===== Build final buffer =====
     // copy input from ctx->in to all
 
     u_char *all = ngx_pnalloc(r->pool, ctx->len + 1);
@@ -689,8 +689,8 @@ ngx_http_ts_highlight(
     #if 0
     TSNode root = ts_tree_root_node(tree);
 
-    /* For now: fallback = plain escaped text */
-    /* We'll replace this with real highlighting next */
+    // For now: fallback = plain escaped text
+    // We'll replace this with real highlighting next
 
     size_t cap = len * 2 + 64;
     u_char *buf = ngx_pnalloc(r->pool, cap);
@@ -922,12 +922,12 @@ ts_render_html(
             continue;
         }
 
-        /* emit text before span */
+        // emit text before span
         while (pos < s[i].start && pos < len) {
             p = ts_escape_char(p, src[pos++]);
         }
 
-        /* open span */
+        // open span
         // NOTE class_name can contain dots like "punctuation.special"
         p += sprintf((char *)p, "<span class=\"%s\">", s[i].class_name);
 
@@ -937,12 +937,12 @@ ts_render_html(
         );
         #endif
 
-        /* emit span content */
+        // emit span content
         while (pos < s[i].end && pos < len) {
             p = ts_escape_char(p, src[pos++]);
         }
 
-        /* close */
+        // close
         p += sprintf((char *)p, "</span>");
 
         prev_start = s[i].start;
@@ -952,7 +952,7 @@ ts_render_html(
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: tail");
     #endif
 
-    /* tail */
+    // tail
     while (pos < len) {
         p = ts_escape_char(p, src[pos++]);
     }
