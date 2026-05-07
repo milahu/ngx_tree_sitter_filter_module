@@ -542,9 +542,9 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         ".type { color: #a0a; }\n" // purple
         "</style>\n"
         "</head>\n"
+        "<body>\n"
         // TODO add conf->language_name as class
-        "<body class=\"code\">\n"
-        "<pre>"
+        "<pre class=\"code\">"
     );
 
     const char *suffix = (
