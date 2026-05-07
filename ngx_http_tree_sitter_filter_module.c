@@ -529,6 +529,7 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         "<head>\n"
         "<meta charset=\"utf8\">\n"
         "<meta name=\"generator\" content=\"" HTML_META_GENERATOR "\">\n"
+        // TODO set title?
         "<style>\n"
         // TODO use conf->css_style
         // ".keyword { color: #c00; }\n" // darkred
@@ -541,6 +542,7 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         ".function { color: #06c; }\n" // blue
         ".type { color: #a0a; }\n" // purple
         "</style>\n"
+        // TODO allow user to insert custom HTML
         "</head>\n"
         "<body>\n"
         // TODO add conf->language_name as class
@@ -926,6 +928,7 @@ ts_render_html(
         }
 
         /* open span */
+        // NOTE class_name can contain dots like "punctuation.special"
         p += sprintf((char *)p, "<span class=\"%s\">", s[i].class_name);
 
         #if 0
