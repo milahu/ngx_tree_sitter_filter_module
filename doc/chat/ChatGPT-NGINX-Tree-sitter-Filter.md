@@ -24,8 +24,7 @@ Here’s a practical blueprint for `ngx_tree_sitter_filter_module` that keeps th
 
 ------------------------------------------------------------------------
 
-1)  High-level design  
-    ====================
+1)  # High-level design
 
 ### Responsibilities
 
@@ -45,8 +44,7 @@ Here’s a practical blueprint for `ngx_tree_sitter_filter_module` that keeps th
 
 ------------------------------------------------------------------------
 
-2)  Module structure  
-    ===================
+2)  # Module structure
 
 <!-- -->
 
@@ -54,8 +52,7 @@ Here’s a practical blueprint for `ngx_tree_sitter_filter_module` that keeps th
 
 ------------------------------------------------------------------------
 
-3)  NGINX module skeleton  
-    ========================
+3)  # NGINX module skeleton
 
 ### Module definition
 
@@ -63,8 +60,7 @@ Here’s a practical blueprint for `ngx_tree_sitter_filter_module` that keeps th
 
 ------------------------------------------------------------------------
 
-4)  Config directives  
-    ====================
+4)  # Config directives
 
 <!-- -->
 
@@ -76,8 +72,7 @@ Here’s a practical blueprint for `ngx_tree_sitter_filter_module` that keeps th
 
 ------------------------------------------------------------------------
 
-5)  Handling `raw=1`  
-    ===================
+5)  # Handling `raw=1`
 
 <!-- -->
 
@@ -87,8 +82,7 @@ Here’s a practical blueprint for `ngx_tree_sitter_filter_module` that keeps th
 
 ------------------------------------------------------------------------
 
-6)  Filter chain hooks  
-    =====================
+6)  # Filter chain hooks
 
 <!-- -->
 
@@ -100,8 +94,7 @@ Here’s a practical blueprint for `ngx_tree_sitter_filter_module` that keeps th
 
 ------------------------------------------------------------------------
 
-7)  Body buffering  
-    =================
+7)  # Body buffering
 
 <!-- -->
 
@@ -109,8 +102,7 @@ Here’s a practical blueprint for `ngx_tree_sitter_filter_module` that keeps th
 
 ------------------------------------------------------------------------
 
-8)  Tree-sitter runtime (dynamic loading)  
-    ========================================
+8)  # Tree-sitter runtime (dynamic loading)
 
 ### Load parser `.so`
 
@@ -122,8 +114,7 @@ Store in:
 
 ------------------------------------------------------------------------
 
-9)  Parsing  
-    ==========
+9)  # Parsing
 
 <!-- -->
 
@@ -131,8 +122,7 @@ Store in:
 
 ------------------------------------------------------------------------
 
-10) HTML serialization  
-    ======================
+10) # HTML serialization
 
 You have two approaches:
 
@@ -158,8 +148,7 @@ Example pseudo:
 
 ------------------------------------------------------------------------
 
-11) Minimal serializer example  
-    ==============================
+11) # Minimal serializer example
 
 <!-- -->
 
@@ -172,8 +161,7 @@ Example pseudo:
 
 ------------------------------------------------------------------------
 
-12) Final response generation  
-    =============================
+12) # Final response generation
 
 <!-- -->
 
@@ -181,8 +169,7 @@ Example pseudo:
 
 ------------------------------------------------------------------------
 
-13) Build system (`config` file)  
-    ================================
+13) # Build system (`config` file)
 
 <!-- -->
 
@@ -190,8 +177,7 @@ Example pseudo:
 
 ------------------------------------------------------------------------
 
-14) Example nginx.conf  
-    ======================
+14) # Example nginx.conf
 
 <!-- -->
 
@@ -199,8 +185,7 @@ Example pseudo:
 
 ------------------------------------------------------------------------
 
-15) Hard problems (don’t ignore these)  
-    ======================================
+15) # Hard problems (don’t ignore these)
 
 ### 1. Large files
 
@@ -225,8 +210,7 @@ Example pseudo:
 
 ------------------------------------------------------------------------
 
-16) Optional improvements  
-    =========================
+16) # Optional improvements
 
 - CSS theme system
 - Language auto-detection by extension
@@ -236,8 +220,7 @@ Example pseudo:
 
 ------------------------------------------------------------------------
 
-17) Suggested MVP scope  
-    =======================
+17) # Suggested MVP scope
 
 Start with:
 
@@ -495,8 +478,7 @@ This is your “it builds and runs” baseline.
 
 ------------------------------------------------------------------------
 
-1)  Minimal working module (single C file)  
-    =========================================
+1)  # Minimal working module (single C file)
 
 <!-- -->
 
@@ -504,8 +486,7 @@ This is your “it builds and runs” baseline.
 
 ------------------------------------------------------------------------
 
-2)  Build integration (`config` file)  
-    ====================================
+2)  # Build integration (`config` file)
 
 <!-- -->
 
@@ -513,8 +494,7 @@ This is your “it builds and runs” baseline.
 
 ------------------------------------------------------------------------
 
-3)  Example nginx.conf  
-    =====================
+3)  # Example nginx.conf
 
 <!-- -->
 
@@ -526,8 +506,7 @@ Test:
 
 ------------------------------------------------------------------------
 
-4)  What you have now  
-    ====================
+4)  # What you have now
 
 ✔ filter chain wired correctly  
 ✔ full buffering works  
@@ -536,8 +515,7 @@ Test:
 
 ------------------------------------------------------------------------
 
-5)  Next step (I recommend this order)  
-    =====================================
+5)  # Next step (I recommend this order)
 
 <!-- -->
 
@@ -548,8 +526,7 @@ Test:
 
 ------------------------------------------------------------------------
 
-6)  Important immediate fix (do this next)  
-    =========================================
+6)  # Important immediate fix (do this next)
 
 Right now you output raw bytes into HTML → this breaks on `<`, `&`, etc.
 
@@ -561,8 +538,7 @@ before integrating Tree-sitter.
 
 ------------------------------------------------------------------------
 
-7)  After that…  
-    ==============
+7)  # After that…
 
 I can help you implement:
 
@@ -595,8 +571,7 @@ Let’s build a clean, NGINX-native implementation.
 
 ------------------------------------------------------------------------
 
-1)  What a Tree-sitter `.so` looks like  
-    ======================================
+1)  # What a Tree-sitter `.so` looks like
 
 Each grammar exports a symbol like:
 
@@ -610,8 +585,7 @@ So your loader must:
 
 ------------------------------------------------------------------------
 
-2)  Data structures  
-    ==================
+2)  # Data structures
 
 Add this to your module:
 
@@ -627,8 +601,7 @@ Extend your loc conf:
 
 ------------------------------------------------------------------------
 
-3)  Directive: `tree_sitter_language`  
-    ====================================
+3)  # Directive: `tree_sitter_language`
 
 ### Usage:
 
@@ -648,8 +621,7 @@ Extend your loc conf:
 
 ------------------------------------------------------------------------
 
-4)  Load `.so` files (postconfiguration phase)  
-    =============================================
+4)  # Load `.so` files (postconfiguration phase)
 
 You want to load parsers **once at config time**, not per request.
 
@@ -659,8 +631,7 @@ Modify your init:
 
 ------------------------------------------------------------------------
 
-5)  Hook into config lifecycle  
-    =============================
+5)  # Hook into config lifecycle
 
 Update your `postconfiguration`:
 
@@ -668,8 +639,7 @@ Update your `postconfiguration`:
 
 ------------------------------------------------------------------------
 
-6)  Lookup helper (by name)  
-    ==========================
+6)  # Lookup helper (by name)
 
 <!-- -->
 
@@ -677,8 +647,7 @@ Update your `postconfiguration`:
 
 ------------------------------------------------------------------------
 
-7)  Quick test strategy  
-    ======================
+7)  # Quick test strategy
 
 Start simple:
 
@@ -690,8 +659,7 @@ Then in your body filter:
 
 ------------------------------------------------------------------------
 
-8)  Important pitfalls (don’t skip)  
-    ==================================
+8)  # Important pitfalls (don’t skip)
 
 ### 1. Symbol naming must match
 
@@ -732,8 +700,7 @@ If you want global deduplication later → move to main conf.
 
 ------------------------------------------------------------------------
 
-9)  Next step  
-    ============
+9)  # Next step
 
 Now that you can load languages, the natural next piece is:
 
