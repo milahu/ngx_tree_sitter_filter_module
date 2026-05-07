@@ -517,38 +517,39 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     size_t out_len;
     size_t highlighted_len;
 
-    // single-line html header to preserve line numbers
     const char *prefix = (
-        "<!doctype html>"
+        "<!doctype html>\n"
         // explain the API
-        "<!-- to get the raw version of this file, "
-        "append the request path with `?raw=1`, "
-        "or send the request header `accept:text/plain` -->"
-        "<html>"
-        "<head>"
-        "<meta charset=\"utf8\">"
-        "<meta name=\"generator\" content=\"" HTML_META_GENERATOR "\">"
-        "<style>"
+        "<!--\n"
+        "  to get the raw version of this file\n"
+        "  append the request path with `?raw=1`\n"
+        "  or send the request header `accept:text/plain`\n"
+        "-->\n"
+        "<html>\n"
+        "<head>\n"
+        "<meta charset=\"utf8\">\n"
+        "<meta name=\"generator\" content=\"" HTML_META_GENERATOR "\">\n"
+        "<style>\n"
         // TODO use conf->css_style
-        // ".keyword { color: #c00; }" // darkred
-        // ".keyword { color: #a910d3; }" // purple
-        ".keyword { color: #1b10e6; }" // blue
-        // ".string { color: #080; }" // green
-        ".string { color: #a21f2d; }" // red
-        // ".comment { color: #888; }" // gray
-        ".comment { color: #008036; }" // green
-        ".function { color: #06c; }" // blue
-        ".type { color: #a0a; }" // purple
-        "</style>"
-        "</head>"
+        // ".keyword { color: #c00; }\n" // darkred
+        // ".keyword { color: #a910d3; }\n" // purple
+        ".keyword { color: #1b10e6; }\n" // blue
+        // ".string { color: #080; }\n" // green
+        ".string { color: #a21f2d; }\n" // red
+        // ".comment { color: #888; }\n" // gray
+        ".comment { color: #008036; }\n" // green
+        ".function { color: #06c; }\n" // blue
+        ".type { color: #a0a; }\n" // purple
+        "</style>\n"
+        "</head>\n"
         // TODO add conf->language_name as class
-        "<body class=\"code\">"
+        "<body class=\"code\">\n"
         "<pre>"
     );
 
     const char *suffix = (
-        "</pre>"
-        "</body>"
+        "</pre>\n"
+        "</body>\n"
         "</html>\n"
     );
 
