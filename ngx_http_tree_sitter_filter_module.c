@@ -518,6 +518,10 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     // single-line html header to preserve line numbers
     const char *prefix = (
         "<!doctype html>"
+        // explain the API
+        "<!-- to get the raw version of this file, "
+        "append the request path with `?raw=1`, "
+        "or send the request header `accept:text/plain` -->"
         "<html>"
         "<head>"
         "<style>"
