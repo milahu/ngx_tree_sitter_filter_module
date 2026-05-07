@@ -10,6 +10,8 @@
 #endif
 
 #define DEBUG 0
+#define DEBUG2 0
+#define DEBUG3 1
 
 #define HTML_META_GENERATOR "https://github.com/milahu/ngx_tree_sitter_filter_module"
 
@@ -30,19 +32,46 @@ typedef struct {
     TSQuery *query;
 } ngx_http_ts_loc_conf_t;
 
+typedef struct {
+    ngx_http_request_t *r;
+    ngx_chain_t *chain;
+    ngx_chain_t *current;
+    size_t current_start; // absolute start offset of current buffer
+    size_t current_end; // absolute end offset (exclusive)
+    size_t pos; // position of the next char to read
+    size_t size; // total number of chars in the chain
+} ts_reader_t;
+
+typedef struct {
+    ngx_http_request_t *r;
+    ngx_chain_t *head;
+    ngx_chain_t *tail;
+    ngx_buf_t *buf;
+    size_t capacity;
+} ts_writer_t;
+
 // temporary state: per request
 typedef struct {
     ngx_buf_t *buf;
-    ngx_chain_t *in;
+    // ngx_chain_t *in;
     size_t len;
-    unsigned done:1;
+    ngx_chain_t *input_head;
+    ngx_chain_t *input_tail;
+    ngx_flag_t done;
+    ts_reader_t *reader;
+    ts_writer_t *writer;
 } ngx_http_ts_ctx_t;
 
 typedef struct {
     uint32_t start;
     uint32_t end;
     const char *class_name;
+    size_t class_name_len;
 } ts_span_t;
+
+typedef struct {
+    ngx_chain_t *chain;
+} ts_input_ctx_t;
 
 
 
@@ -60,7 +89,21 @@ static char *ngx_http_ts_merge_loc_conf(ngx_conf_t *cf, void *parent, void *chil
 
 static ngx_int_t ngx_http_ts_load_language_runtime(ngx_http_request_t *r, ngx_http_ts_loc_conf_t *conf);
 
-static ngx_int_t ngx_http_ts_highlight(ngx_http_request_t *r, ngx_http_ts_loc_conf_t *conf, u_char *src, size_t len, u_char **out, size_t *out_len);
+static const char *
+ts_nginx_read(
+    void *payload,
+    uint32_t byte_offset,
+    TSPoint position,
+    uint32_t *bytes_read
+);
+
+static ngx_int_t
+ngx_http_ts_highlight(
+    ngx_http_request_t *r,
+    ngx_http_ts_loc_conf_t *conf,
+    ts_reader_t *reader,
+    ts_writer_t *writer
+);
 
 static TSQuery *ngx_ts_load_query(ngx_http_request_t *r, ngx_http_ts_loc_conf_t *conf);
 
@@ -70,9 +113,52 @@ static ngx_int_t ts_collect_spans(ngx_http_request_t *r, ngx_http_ts_loc_conf_t 
 
 static int ts_span_cmp(const void *a, const void *b);
 
-static ngx_int_t ts_render_html(ngx_http_request_t *r, u_char *src, size_t len, ngx_array_t *spans, u_char **out, size_t *out_len);
+static ngx_int_t
+ts_render_html(
+    ngx_http_request_t *r,
+    ts_reader_t *reader,
+    ngx_array_t *spans,
+    ts_writer_t *writer
+);
 
-static ngx_inline u_char *ts_escape_char(u_char *p, u_char c);
+static ngx_int_t
+ts_escape_char(
+    ts_writer_t *writer,
+    const char c
+);
+
+static ngx_int_t
+ts_writer_new_buf(
+    ts_writer_t *w
+);
+
+static ngx_int_t
+ts_writer_write(
+    ts_writer_t *w,
+    const char *data,
+    size_t len
+);
+
+static ngx_int_t
+ts_reader_init(
+    // ts_reader_t **reader_ptr,
+    ts_reader_t *reader,
+    ngx_http_request_t *request,
+    ngx_chain_t *chain
+);
+
+static ngx_inline u_char
+ts_reader_read(
+    ts_reader_t *r,
+    size_t pos
+);
+
+#if DEBUG3
+#if false
+static void
+ts_dump_chain(ngx_chain_t *in, ngx_log_t *log);
+#endif
+#endif
 
 
 
@@ -346,30 +432,33 @@ ngx_http_ts_load_language_runtime(
 
 
 
-static ngx_inline u_char *
-ts_escape_char(u_char *p, u_char c)
+static ngx_int_t
+ts_escape_char(
+    ts_writer_t *writer,
+    const char c
+)
 {
     switch (c) {
         case '<':
-            p = ngx_cpymem(p, "&lt;", 4);
+            ts_writer_write(writer, "&lt;", 4);
             break;
 
         #if 0
         case '>':
-            p = ngx_cpymem(p, "&gt;", 4);
+            ts_writer_write(writer, "&gt;", 4);
             break;
         #endif
 
         case '&':
-            p = ngx_cpymem(p, "&amp;", 5);
+            ts_writer_write(writer, "&amp;", 5);
             break;
 
         default:
-            *p++ = c;
+            ts_writer_write(writer, &c, 1);
             break;
     }
 
-    return p;
+    return NGX_OK;
 }
 
 
@@ -381,6 +470,10 @@ ngx_http_ts_header_filter(ngx_http_request_t *r)
 {
     ngx_http_ts_loc_conf_t *conf;
     ngx_http_ts_ctx_t *ctx;
+
+    // disable file-backed buffers for ts_reader_read
+    // ensure that b->pos contains actual data
+    r->filter_need_in_memory = 1;
 
     conf = ngx_http_get_module_loc_conf(r, ngx_http_tree_sitter_filter_module);
 
@@ -428,14 +521,15 @@ ngx_http_ts_header_filter(ngx_http_request_t *r)
 
 // ================= BODY FILTER =================
 
+#if 0
 static ngx_int_t
 ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 {
     ngx_http_ts_loc_conf_t *conf;
     ngx_http_ts_ctx_t *ctx;
-    ngx_buf_t *b;
+    // ngx_buf_t *b;
     // ngx_buf_t *out;
-    ngx_chain_t *cl;
+    // ngx_chain_t *cl;
 
     conf = ngx_http_get_module_loc_conf(r, ngx_http_tree_sitter_filter_module);
 
@@ -456,6 +550,7 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     );
     #endif
 
+    #if false
     // copy input from cl to ctx->in
     for (cl = in; cl; cl = cl->next) {
 
@@ -497,25 +592,11 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     if (!ctx->done) {
         return NGX_OK;
     }
+    #endif
 
-    // ===== Build final buffer =====
-    // copy input from ctx->in to all
+    // syntax highlighting
 
-    u_char *all = ngx_pnalloc(r->pool, ctx->len + 1);
-    if (all == NULL) return NGX_ERROR;
-
-    u_char *p = all;
-
-    for (cl = ctx->in; cl; cl = cl->next) {
-        size_t size = ngx_buf_size(cl->buf);
-        p = ngx_cpymem(p, cl->buf->pos, size);
-    }
-
-    all[ctx->len] = '\0';
-
-    u_char *highlighted;
-    size_t out_len;
-    size_t highlighted_len;
+    // size_t out_len;
 
     const char *prefix = (
         "<!doctype html>\n"
@@ -555,76 +636,91 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         "</html>\n"
     );
 
-    // create output buffer
-    ngx_buf_t *out_buf = ngx_calloc_buf(r->pool);
-    /*
-    out_buf->pos = out;
-    out_buf->last = out + out_len;
-    out_buf->memory = 1;
-    out_buf->last_buf = 1;
-    */
+    if (ctx->writer == NULL) {
+        ctx->writer = ngx_pcalloc(r->pool, sizeof(*ctx->writer));
+        if (ctx->writer == NULL) {
+            return NGX_ERROR;
+        }
+        #if DEBUG3
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+            "ngx_http_ts_body_filter: calling ts_writer_new_buf", &r->uri
+        );
+        #endif
+        ctx->writer->r = r;
+        if (ts_writer_new_buf(ctx->writer) != NGX_OK)
+            return NGX_ERROR;
+    }
+
+    ts_writer_t *writer = ctx->writer;
+
+    #if DEBUG2
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: writer=%p writer->r=%p", writer, writer->r);
+    #endif
 
     #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: calling ngx_http_ts_highlight");
     #endif
 
+    #if DEBUG
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: copying prefix");
+    #endif
+
+    // FIXME write prefix only once
+    // body_filter can be called multiple times (?)
+    ts_writer_write(writer, prefix, ngx_strlen(prefix));
+
+    // TODO? store reader in ctx->reader
+    #if 0
+    ts_reader_t reader_storage;
+    ts_reader_t *reader = &reader_storage;
+    ts_reader_init(reader, in);
+    #else
+    if (ctx->reader == NULL) {
+        if (ts_reader_init(&ctx->reader, r, in) == NGX_ERROR) {
+            return NGX_ERROR;
+        }
+    }
+    ts_reader_t *reader = ctx->reader;
+    #endif
+
+    #if DEBUG2
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: reader=%p reader->r=%p", reader, reader->r);
+    #endif
+
     if (
         conf->language != NULL &&
-        // parse input
+        // parse input, write html
         ngx_http_ts_highlight(
             r,
             conf,
-            all,
-            ctx->len,
-            &highlighted,
-            &highlighted_len
+            reader,
+            writer
         ) == NGX_OK
     )
     {
         // highlight done
-
-        out_len = ngx_strlen(prefix) + highlighted_len + ngx_strlen(suffix);
-
-        u_char *out = ngx_pnalloc(r->pool, out_len);
-        if (out == NULL) return NGX_ERROR;
-
-        out_buf->pos = out;
-        out_buf->last = out;
-
-        #if DEBUG
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: copying prefix");
-        #endif
-
-        out_buf->last = ngx_cpymem(out_buf->last, prefix, ngx_strlen(prefix));
-
-        #if DEBUG
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: copying highlighted: len=%d", highlighted_len);
-        #endif
-
-        out_buf->last = ngx_cpymem(out_buf->last, highlighted, highlighted_len);
-
-        #if DEBUG
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: copying suffix");
-        #endif
-
-        out_buf->last = ngx_cpymem(out_buf->last, suffix, ngx_strlen(suffix));
-
-        #if DEBUG
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: done copying");
-        #endif
-
-        // TODO? free highlighted
     } else {
-        // FIXME return valid HTML, since in header_filter, we have already sent content-type:text/html
         #if DEBUG
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: calling ngx_http_ts_highlight failed");
         #endif
+
         // highlight failed -> fallback
-        out_len = ctx->len;
-        // out_buf->last = ngx_cpymem(out_buf->last, all, out_len);
-        out_buf->pos = all;
-        out_buf->last = all + ctx->len;
+        size_t pos = reader->pos; // continue reading
+        while (pos < reader->size) {
+            // ts_escape_char(writer, src[pos++]);
+            ts_escape_char(writer, ts_reader_read(reader, pos++));
+        }
     }
+
+    #if DEBUG
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: copying suffix");
+    #endif
+
+    ts_writer_write(writer, suffix, ngx_strlen(suffix));
+
+    #if DEBUG
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: done copying");
+    #endif
 
     /*
     ngx_buf_t *out_buf = ngx_calloc_buf(r->pool);
@@ -634,18 +730,230 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     out_buf->last_buf = 1;
     */
 
-    out_buf->memory = 1;
-    out_buf->last_buf = 1;
+    // out_buf->memory = 1;
+    // out_buf->last_buf = 1;
 
     #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_body_filter: creating out_chain");
     #endif
 
-    ngx_chain_t out_chain = { out_buf, NULL };
+    #if DEBUG3
+    // FIXME chain_idx from 0 to 12: empty buffer
+    ts_dump_chain(writer->head, r->connection->log);
+    size_t chain_idx = 0;
+    for (ngx_chain_t *cl = writer->head; cl; cl = cl->next) {
+        if (ngx_buf_size(cl->buf) == 0) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                "BUG: zero-size buffer created here at chain_idx=%d", chain_idx);
+            ngx_debug_point();
+        }
+        chain_idx++;
+    }
+    #endif
 
-    r->headers_out.content_length_n = out_len;
+    writer->tail->buf->last_buf = 1;
 
-    return ngx_http_next_body_filter(r, &out_chain);
+    return ngx_http_next_body_filter(r, writer->head);
+}
+#else
+static ngx_int_t
+ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
+{
+    ngx_http_ts_loc_conf_t *conf;
+    ngx_http_ts_ctx_t *ctx;
+
+    ngx_chain_t *cl;
+    ngx_buf_t *b;
+
+    ngx_flag_t last = 0;
+
+    conf = ngx_http_get_module_loc_conf(r, ngx_http_tree_sitter_filter_module);
+
+    if (!conf->enabled || in == NULL) {
+        // module is disabled
+        return ngx_http_next_body_filter(r, in);
+    }
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tree_sitter_filter_module);
+
+    if (ctx == NULL) {
+
+        ctx = ngx_pcalloc(r->pool, sizeof(*ctx));
+        if (ctx == NULL) {
+            return NGX_ERROR;
+        }
+
+        // set request context
+        ngx_http_set_ctx(r, ctx, ngx_http_tree_sitter_filter_module);
+    }
+
+    // append incoming chain to buffered input
+    for (cl = in; cl; cl = cl->next) {
+
+        b = cl->buf;
+
+        // ignore empty buffers unless they signal EOF
+        if (ngx_buf_size(b) == 0 && !b->last_buf) {
+            continue;
+        }
+
+        // clone chain link
+        ngx_chain_t *copy = ngx_alloc_chain_link(r->pool);
+        if (copy == NULL) {
+            return NGX_ERROR;
+        }
+
+        copy->buf = b;
+        copy->next = NULL;
+
+        if (ctx->input_tail) {
+            ctx->input_tail->next = copy;
+        } else {
+            ctx->input_head = copy;
+        }
+
+        ctx->input_tail = copy;
+
+        if (b->last_buf) {
+            last = 1;
+        }
+    }
+
+    // not final chunk yet
+    // wait for more body data
+    if (!last) {
+        return NGX_OK;
+    }
+
+    if (ctx->done) {
+        // already processed
+        return NGX_OK;
+    }
+
+    ctx->done = 1;
+
+    // initialize reader
+    ts_reader_t reader_storage;
+    ngx_memzero(&reader_storage, sizeof(reader_storage));
+
+    ts_reader_init(&reader_storage, r, ctx->input_head);
+
+    // initialize writer
+    ts_writer_t writer_storage;
+    ngx_memzero(&writer_storage, sizeof(writer_storage));
+
+    writer_storage.r = r;
+
+    if (ts_writer_new_buf(&writer_storage) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
+    // html prefix
+    static const char *prefix = (
+        "<!doctype html>\n"
+        "<html>\n"
+        "<head>\n"
+        "<meta charset=\"utf-8\">\n"
+        "<style>\n"
+        ".keyword { color: #c00; }\n"
+        ".string { color: #080; }\n"
+        ".comment { color: #888; }\n"
+        ".function { color: #06c; }\n"
+        ".type { color: #a0a; }\n"
+        "</style>\n"
+        "</head>\n"
+        "<body>\n"
+        "<pre>"
+    );
+
+    static const char *suffix = (
+        "</pre>\n"
+        "</body>\n"
+        "</html>\n"
+    );
+
+    if (ts_writer_write(&writer_storage, prefix, ngx_strlen(prefix)) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
+    // run syntax highlighting
+    if (
+        conf->language != NULL &&
+        ngx_http_ts_highlight(r, conf, &reader_storage, &writer_storage) != NGX_OK
+    ) {
+        // fallback: plain text
+        size_t pos = 0;
+        while (pos < reader_storage.size) {
+            u_char ch = ts_reader_read(&reader_storage, pos++);
+            if (ts_escape_char(&writer_storage, ch) != NGX_OK) {
+                return NGX_ERROR;
+            }
+        }
+    }
+
+    // html suffix
+    if (ts_writer_write(
+            &writer_storage,
+            suffix,
+            ngx_strlen(suffix)
+        ) != NGX_OK)
+    {
+        return NGX_ERROR;
+    }
+
+    // mark final output buffer
+    if (writer_storage.tail &&
+        writer_storage.tail->buf)
+    {
+        writer_storage.tail->buf->last_buf = 1;
+    }
+
+    // update content length
+    // (optional: or clear it for chunked encoding)
+    r->headers_out.content_length_n = -1;
+
+    // send final generated output
+    return ngx_http_next_body_filter(
+        r,
+        writer_storage.head
+    );
+}
+#endif
+
+
+
+static const char *
+ts_nginx_read(
+    void *payload,
+    uint32_t byte_offset,
+    TSPoint position,
+    uint32_t *bytes_read
+)
+{
+    ts_input_ctx_t *ctx = payload;
+    ngx_chain_t *cl;
+    ngx_buf_t *b;
+    size_t chain_pos = 0;
+    for (cl = ctx->chain; cl; cl = cl->next) {
+        b = cl->buf;
+        // note: ngx_buf_size(b) == (b->last - b->pos)
+        size_t buf_size = ngx_buf_size(b);
+        if (buf_size == 0) {
+            continue;
+        }
+        size_t next_chain_pos = chain_pos + buf_size;
+        // Does this buffer contain byte_offset?
+        if (chain_pos <= byte_offset && byte_offset < next_chain_pos)
+        {
+            size_t local_offset = byte_offset - chain_pos;
+            *bytes_read = buf_size - local_offset;
+            return (const char *)(b->pos + local_offset);
+        }
+        chain_pos = next_chain_pos;
+    }
+    // EOF
+    *bytes_read = 0;
+    return NULL;
 }
 
 
@@ -654,12 +962,13 @@ static ngx_int_t
 ngx_http_ts_highlight(
     ngx_http_request_t *r,
     ngx_http_ts_loc_conf_t *conf,
-    u_char *src,
-    size_t len,
-    u_char **out,
-    size_t *out_len
+    ts_reader_t *reader,
+    ts_writer_t *writer
 )
 {
+    // ngx_chain_t *cl;
+    // ngx_buf_t *b;
+
     #if DEBUG
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ngx_http_ts_highlight: hello");
     #endif
@@ -672,11 +981,22 @@ ngx_http_ts_highlight(
         return NGX_ERROR;
     }
 
-    TSTree *tree = ts_parser_parse_string(
+    // TODO? use ngx_pcalloc
+    ts_input_ctx_t input_ctx_storage;
+    ts_input_ctx_t *input_ctx = &input_ctx_storage;
+    // ngx_memzero(input_ctx, sizeof(*input_ctx));
+    input_ctx->chain = reader->chain;
+
+    TSInput input = {
+        .payload = input_ctx,
+        .read = ts_nginx_read,
+        .encoding = TSInputEncodingUTF8,
+    };
+
+    TSTree *tree = ts_parser_parse(
         parser,
-        NULL,
-        (const char *)src,
-        len
+        NULL, // old_tree
+        input
     );
 
     if (tree == NULL) {
@@ -699,7 +1019,7 @@ ngx_http_ts_highlight(
     u_char *p = buf;
 
     for (size_t i = 0; i < len; i++) {
-        p = ts_escape_char(p, src[i]);
+        ts_escape_char(writer, src[i]);
     }
 
     *out = buf;
@@ -722,8 +1042,9 @@ ngx_http_ts_highlight(
         return NGX_ERROR;
     }
 
-    ngx_int_t rc = ts_render_html(r, src, len, spans, out, out_len);
+    ngx_int_t rc = ts_render_html(r, reader, spans, writer);
 
+    // TODO? move up before ts_render_html
     ts_tree_delete(tree);
     ts_parser_delete(parser);
 
@@ -857,7 +1178,8 @@ ts_collect_spans(
         s->start = start;
         s->end = end;
         // s->class_name = ts_capture_to_class(cap_name, cap_name_len);
-        s->class_name = cap_name; // TODO copy string?
+        s->class_name = cap_name;
+        s->class_name_len = cap_name_len;
     }
 
     ts_query_cursor_delete(cursor);
@@ -879,9 +1201,9 @@ ts_span_cmp(const void *a, const void *b)
 static ngx_int_t
 ts_render_html(
     ngx_http_request_t *r,
-    u_char *src, size_t len,
+    ts_reader_t *reader,
     ngx_array_t *spans,
-    u_char **out, size_t *out_len
+    ts_writer_t *writer
 )
 {
     #if DEBUG
@@ -899,15 +1221,7 @@ ts_render_html(
     #endif
     qsort(s, n, sizeof(ts_span_t), ts_span_cmp);
 
-    // size_t cap = len * 4 + 1024; // too small?
-    size_t cap = len * 10 + 10240;
-    #if DEBUG
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: buf = ngx_pnalloc");
-    #endif
-    u_char *buf = ngx_pnalloc(r->pool, cap);
-    if (!buf) return NGX_ERROR;
-
-    u_char *p = buf;
+    // u_char *p = buf;
     size_t pos = 0;
     size_t prev_start = (size_t)(-1);
 
@@ -915,6 +1229,43 @@ ts_render_html(
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: looping spans: n=%d", n);
     #endif
 
+    // ngx_chain_t *cl;
+    // ngx_buf_t *b;
+    // size_t buf_offset = 0; // buffer position in the buffer chain
+    // size_t buf_size = 0;
+
+    // cl = in;
+    // b = cl->buf;
+    // buf_size = ngx_buf_size(b);
+
+    // // seek to the first non-empty buffer
+    // while (buf_size == 0 && cl) {
+    //     cl = cl->next;
+    //     b = cl->buf;
+    //     buf_size = ngx_buf_size(b);
+    // }
+
+    // if (cl == NULL) {
+    //     // EOF
+    //     return NGX_OK;
+    // }
+
+    // // TODO: cl = cl->next
+    // for (cl = in; cl; cl = cl->next) {
+    //     // note: ngx_buf_size(b) == (b->last - b->pos)
+    //     // Does this buffer contain byte_offset?
+    //     if (chain_pos <= byte_offset && byte_offset < next_chain_pos)
+    //     {
+    //         size_t local_offset = byte_offset - chain_pos;
+    //         *bytes_read = buf_size - local_offset;
+    //         return (const char *)(b->pos + local_offset);
+    //     }
+    //     chain_pos += buf_size;
+    // }
+
+    const size_t len = reader->size;
+
+    // loop spans
     for (ngx_uint_t i = 0; i < n; i++) {
 
         if (s[i].start == prev_start) {
@@ -924,12 +1275,19 @@ ts_render_html(
 
         // emit text before span
         while (pos < s[i].start && pos < len) {
-            p = ts_escape_char(p, src[pos++]);
+            // ts_escape_char(writer, src[pos++]);
+            ts_escape_char(writer, ts_reader_read(reader, pos++));
         }
+
+        #if DEBUG2
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: opening span: start=%d class=%s", s[i].start, s[i].class_name); // debug
+        #endif
 
         // open span
         // NOTE class_name can contain dots like "punctuation.special"
-        p += sprintf((char *)p, "<span class=\"%s\">", s[i].class_name);
+        ts_writer_write(writer, "<span class=\"", 13);
+        ts_writer_write(writer, s[i].class_name, s[i].class_name_len);
+        ts_writer_write(writer, "\">", 2);
 
         #if 0
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "ts_render_html: looping spans: i=%d class=%s start=%d end=%d len=%d",
@@ -939,11 +1297,12 @@ ts_render_html(
 
         // emit span content
         while (pos < s[i].end && pos < len) {
-            p = ts_escape_char(p, src[pos++]);
+            // ts_escape_char(writer, src[pos++]);
+            ts_escape_char(writer, ts_reader_read(reader, pos++));
         }
 
         // close
-        p += sprintf((char *)p, "</span>");
+        ts_writer_write(writer, "</span>", 7);
 
         prev_start = s[i].start;
     }
@@ -954,11 +1313,242 @@ ts_render_html(
 
     // tail
     while (pos < len) {
-        p = ts_escape_char(p, src[pos++]);
+        // ts_escape_char(writer, src[pos++]);
+        ts_escape_char(writer, ts_reader_read(reader, pos++));
     }
-
-    *out = buf;
-    *out_len = p - buf;
 
     return NGX_OK;
 }
+
+
+
+static ngx_int_t
+ts_writer_new_buf(
+    ts_writer_t *w
+)
+{
+    // const size_t buf_size = 4096;
+    const size_t buf_size = 5349;
+
+    #if DEBUG2
+    ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_new_buf: ngx_create_temp_buf"); // debug
+    #endif
+
+    ngx_buf_t *b = ngx_create_temp_buf(w->r->pool, buf_size);
+    if (!b) return NGX_ERROR;
+
+    b->memory = 1;
+
+    // TODO remove?
+    // ensure clean state
+    b->pos = b->start;
+    b->last = b->start;
+
+    #if DEBUG2
+    ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_new_buf: ngx_alloc_chain_link"); // debug
+    #endif
+
+    ngx_chain_t *cl = ngx_alloc_chain_link(w->r->pool);
+    if (!cl) return NGX_ERROR;
+
+    cl->buf = b;
+    cl->next = NULL;
+
+    if (w->tail) {
+        #if DEBUG2
+        ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_new_buf: w->tail->next = cl;"); // debug
+        #endif
+        w->tail->next = cl;
+    } else {
+        #if DEBUG2
+        ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_new_buf: w->head = cl;"); // debug
+        #endif
+        w->head = cl;
+    }
+
+    #if DEBUG2
+    ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_new_buf: w->tail = cl;"); // debug
+    #endif
+
+    w->tail = cl;
+    w->buf = b;
+    w->capacity = buf_size;
+
+    #if DEBUG2
+    ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_new_buf: return NGX_OK;"); // debug
+    #endif
+
+    return NGX_OK;
+}
+
+
+
+static ngx_int_t
+ts_writer_write(
+    ts_writer_t *w,
+    const char *data,
+    size_t len
+)
+{
+    #if DEBUG2
+    ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_write: hello"); // debug
+    #endif
+
+    // FIXME handle len > buf_size
+
+    while (len > 0) {
+
+        #if DEBUG2
+        ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_write: w->buf->end=%d w->buf->last=%d", w->buf->end, w->buf->last); // debug
+        #endif
+
+        size_t space = w->buf->end - w->buf->last;
+
+        #if DEBUG2
+        ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_write: len=%d space=%d", len, space); // debug
+        #endif
+
+        // if (space == 0) {
+        // MIN_CHUNK = 512 -> avoid pathological fragmentation
+        if (space < 512) {
+            #if DEBUG3
+            ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_write: len=%d space=%d -> calling ts_writer_new_buf", len, space); // debug
+            #endif
+            if (ts_writer_new_buf(w) != NGX_OK) {
+                #if DEBUG3
+                ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_write: ts_writer_new_buf failed"); // debug
+                #endif
+                return NGX_ERROR;
+            }
+            continue;
+        }
+
+        size_t n = (len < space) ? len : space;
+
+        #if DEBUG2
+        ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_write: n=%d: ngx_cpymem", n); // debug
+        // ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_write: w=%p", w); // debug
+        // ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_write: w->buf=%p", w->buf); // debug
+        // ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_write: w->buf->last=%p", w->buf->last); // debug
+        #endif
+
+        w->buf->last = ngx_cpymem(w->buf->last, data, n);
+
+        #if DEBUG2
+        ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_write: ngx_cpymem done"); // debug
+        #endif
+
+        data += n;
+        len -= n;
+    }
+
+    #if DEBUG2
+    ngx_log_error(NGX_LOG_ERR, w->r->connection->log, 0, "ts_writer_write: return NGX_OK;"); // debug
+    #endif
+
+    return NGX_OK;
+}
+
+
+
+static ngx_int_t
+ts_reader_init(
+    // ts_reader_t **reader_ptr,
+    ts_reader_t *reader,
+    ngx_http_request_t *request,
+    ngx_chain_t *chain
+)
+{
+    // *reader_ptr = ngx_pcalloc(request->pool, sizeof(**reader_ptr));
+    // if (*reader_ptr == NULL) {
+    //     return NGX_ERROR;
+    // }
+    // ts_reader_t *reader = *reader_ptr;
+    reader->r = request;
+    reader->chain = chain;
+    reader->current = chain;
+    if (chain && chain->buf) {
+        size_t size = ngx_buf_size(chain->buf);
+        reader->current_start = 0;
+        reader->current_end = size;
+        // reader->size = 0;
+        for (ngx_chain_t *cl = chain; cl; cl = cl->next) {
+            reader->size += ngx_buf_size(cl->buf);
+        }
+    }
+    return NGX_OK;
+}
+
+
+
+static ngx_inline u_char
+ts_reader_read(
+    ts_reader_t *r,
+    size_t pos
+)
+{
+    ngx_buf_t *b;
+    // Fast path:
+    // requested byte still inside current buffer.
+    if (r->current &&
+        pos >= r->current_start &&
+        pos < r->current_end)
+    {
+        b = r->current->buf;
+        r->pos = pos + 1;
+        return b->pos[pos - r->current_start];
+    }
+    // Slow path:
+    // walk chain until buffer containing pos.
+    ngx_chain_t *cl = r->current;
+    size_t start = r->current_start;
+    // If seeking backwards,
+    // restart from beginning.
+    if (pos < start) {
+        cl = r->chain;
+        start = 0;
+    }
+    for (; cl; cl = cl->next) {
+        b = cl->buf;
+        size_t size = ngx_buf_size(b);
+        size_t end = start + size;
+        if (pos >= start && pos < end) {
+            r->current = cl;
+            r->current_start = start;
+            r->current_end = end;
+            r->pos = pos + 1;
+            return b->pos[pos - start];
+        }
+        start = end;
+    }
+    // Out of range.
+    r->pos = pos;
+    return '\0';
+}
+
+
+
+#if DEBUG3
+#if false
+static void
+ts_dump_chain(ngx_chain_t *in, ngx_log_t *log)
+{
+    size_t i = 0;
+
+    for (ngx_chain_t *cl = in; cl; cl = cl->next, i++) {
+
+        ngx_buf_t *b = cl->buf;
+
+        ngx_log_error(NGX_LOG_ERR, log, 0,
+            "chain[%uz]: pos=%p last=%p size=%z file=%d temp=%d last_buf=%d",
+            i,
+            b->pos,
+            b->last,
+            ngx_buf_size(b),
+            b->in_file,
+            b->temporary,
+            b->last_buf);
+    }
+}
+#endif
+#endif
