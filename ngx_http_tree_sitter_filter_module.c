@@ -11,6 +11,8 @@
 
 #define DEBUG 0
 
+#define HTML_META_GENERATOR "https://github.com/milahu/ngx_tree_sitter_filter_module"
+
 // forward declare module
 extern ngx_module_t ngx_http_tree_sitter_filter_module;
 
@@ -524,6 +526,8 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         "or send the request header `accept:text/plain` -->"
         "<html>"
         "<head>"
+        "<meta charset=\"utf8\">"
+        "<meta name=\"generator\" content=\"" HTML_META_GENERATOR "\">"
         "<style>"
         // TODO use conf->css_style
         // ".keyword { color: #c00; }" // darkred
