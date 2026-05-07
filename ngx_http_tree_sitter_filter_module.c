@@ -523,7 +523,7 @@ ngx_http_ts_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         "<!--\n"
         "  to get the raw version of this file\n"
         "  append the request path with `?raw=1`\n"
-        "  or send the request header `accept:text/plain`\n"
+        "  or add the request header `accept:text/plain`\n"
         "-->\n"
         "<html>\n"
         "<head>\n"
